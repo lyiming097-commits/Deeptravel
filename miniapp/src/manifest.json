@@ -1,0 +1,19 @@
+{
+  "name": "DeepTravel 智能旅行助手",
+  "appid": "__UNI__DEEPTRAVEL",
+  "description": "面向用户的智能旅行顾问微信小程序",
+  "versionName": "0.1.0",
+  "versionCode": "1",
+  "transformPx": false,
+  "mp-weixin": {
+    "appid": "wxe03042f85d6d1077",
+    "setting": {
+      "urlCheck": false,
+      "useLanDebug": true,
+      "es6": true,
+      "minified": true,
+      "postcss": true
+    },
+    "usingComponents": {}
+  }
+}

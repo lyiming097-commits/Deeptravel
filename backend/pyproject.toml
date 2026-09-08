@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deeptravel-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "pydantic>=2.8",
+  "pydantic-settings>=2.4",
+  "httpx>=0.27",
+  "mcp>=1.12,<2",
+  "langgraph>=0.2",
+  "langchain>=0.3",
+  "langchain-deepseek>=0.1",
+  "sqlalchemy[asyncio]>=2.0",
+  "asyncpg>=0.29",
+  "pgvector>=0.3",
+  "alembic>=1.13",
+  "python-multipart>=0.0.9",
+  "pypdf>=5.0",
+  "python-docx>=1.1",
+  "trafilatura>=1.12",
+  "beautifulsoup4>=4.14,<5",
+  "ddgs>=9.15,<10",
+  "playwright>=1.62,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.6"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*", "mcp_servers*"]

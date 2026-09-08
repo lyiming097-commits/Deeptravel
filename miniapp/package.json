@@ -1,0 +1,26 @@
+{
+  "name": "deeptravel-miniapp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:mp-weixin": "node scripts/uni.mjs -p mp-weixin",
+    "build:mp-weixin": "node scripts/uni.mjs build -p mp-weixin"
+  },
+  "dependencies": {
+    "@dcloudio/uni-app": "3.0.0-alpha-5020520260829001",
+    "@dcloudio/uni-components": "3.0.0-alpha-5020520260829001",
+    "@dcloudio/uni-mp-weixin": "3.0.0-alpha-5020520260829001",
+    "@vue/shared": "3.5.42",
+    "vue": "3.5.42"
+  },
+  "devDependencies": {
+    "@dcloudio/types": "3.4.31",
+    "@dcloudio/uni-cli-shared": "3.0.0-alpha-5020520260829001",
+    "@dcloudio/vite-plugin-uni": "3.0.0-alpha-5020520260829001",
+    "vite": "5.2.8"
+  },
+  "overrides": {
+    "@vue/shared": "3.5.42"
+  }
+}
