@@ -1,3 +1,4 @@
+import asyncio
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict
@@ -345,33 +346,41 @@ class TravelPlanningAgent(SpecialistAgent):
             f"{requirements['preferences']} 景点 游览顺序 注意事项"
         )
         self.check_tool(self.rag_tool.name)
-        try:
-            rag_items = await self.rag_tool.search(query)
-        except (RuntimeError, ValueError):
-            rag_items = []
-        evidence = self.rag_tool.reliable(rag_items)
-        knowledge_gap = self.rag_tool.has_knowledge_gap(rag_items)
-        evidence_tools = [self.rag_tool.name]
-        # Always collect current web evidence.  It is request-scoped and is
-        # passed to the answer model alongside durable RAG evidence; it never
-        # gets written to PGVector.
         for tool_name in self.web_tool.tool_names:
             self.check_tool(tool_name)
-        try:
-            search_result = await self.search_web(
-                self.web_tool,
-                query,
-                intent="attraction",
-                destination=destination,
-            )
-        except (RuntimeError, ValueError):
-            search_result = SemanticSearchResult([], list(self.web_tool.tool_names))
-        evidence = sorted(
-            [*evidence, *search_result.items],
-            key=lambda item: item.similarity,
-            reverse=True,
-        )[: self.settings.web_rerank_top_k]
-        evidence_tools.extend(search_result.tools_used)
+        self.check_tool("weather_query")
+
+        async def collect_rag() -> list[EvidenceItem]:
+            try:
+                return await self.rag_tool.search(query)
+            except (RuntimeError, ValueError):
+                return []
+
+        async def collect_web() -> SemanticSearchResult:
+            # Current web evidence is request-scoped and never written to the
+            # durable knowledge base as authoritative content.
+            try:
+                return await self.search_web(
+                    self.web_tool,
+                    query,
+                    intent="attraction",
+                    destination=destination,
+                )
+            except (RuntimeError, ValueError):
+                return SemanticSearchResult([], list(self.web_tool.tool_names))
+
+        async def collect_weather() -> dict[str, Any]:
+            try:
+                return await self.amap_tool.weather(destination)
+            except (RuntimeError, ValueError):
+                return {}
+
+        # Evidence, weather and POI lookup are independent network branches.
+        # Start the first three immediately and use the current coroutine for
+        # POIs so their latencies overlap instead of accumulating serially.
+        rag_task = asyncio.create_task(collect_rag())
+        web_task = asyncio.create_task(collect_web())
+        weather_task = asyncio.create_task(collect_weather())
         self.check_tool("poi_search")
         poi_error = ""
         try:
@@ -405,7 +414,9 @@ class TravelPlanningAgent(SpecialistAgent):
                 ) if part
             ) or "景点"
             try:
-                pois = await self.amap_tool.search_pois(poi_query, destination, limit=12)
+                pois = await self.amap_tool.search_pois(
+                    poi_query, destination, limit=12, enrich_details=False
+                )
             except (RuntimeError, ValueError) as exc:
                 # A long natural-language keyword can be rejected by some
                 # MCP deployments. Retry with progressively simpler,
@@ -415,7 +426,10 @@ class TravelPlanningAgent(SpecialistAgent):
                 for retry_query in (f"{destination} 景点", f"{destination} 旅游景区", destination):
                     try:
                         pois = await self.amap_tool.search_pois(
-                            retry_query, destination, limit=12
+                            retry_query,
+                            destination,
+                            limit=12,
+                            enrich_details=False,
                         )
                     except (RuntimeError, ValueError) as retry_exc:
                         poi_error = str(retry_exc)
@@ -429,7 +443,10 @@ class TravelPlanningAgent(SpecialistAgent):
                     continue
                 try:
                     focused = await self.amap_tool.search_pois(
-                        focused_query, destination, limit=4
+                        focused_query,
+                        destination,
+                        limit=4,
+                        enrich_details=False,
                     )
                 except (RuntimeError, ValueError) as exc:
                     # Keep the successful broad result if a focused expansion
@@ -468,7 +485,10 @@ class TravelPlanningAgent(SpecialistAgent):
                         break
                     try:
                         supplemental = await self.amap_tool.search_pois(
-                            supplemental_query, destination, limit=12
+                            supplemental_query,
+                            destination,
+                            limit=12,
+                            enrich_details=False,
                         )
                     except (RuntimeError, ValueError) as exc:
                         poi_error = str(exc)
@@ -492,7 +512,40 @@ class TravelPlanningAgent(SpecialistAgent):
             # Run a final coordinate pass after filtering/deduplication. The
             # itinerary map must not depend on whether optional photo
             # enrichment happened to succeed for the same POI.
-            pois = await self.amap_tool.enrich_poi_locations(pois, destination)
+            location_seed = pois
+            try:
+                async with asyncio.timeout(
+                    max(
+                        0.1,
+                        self.settings.agent_optional_enrichment_timeout_seconds,
+                    )
+                ):
+                    pois = await self.amap_tool.enrich_poi_locations(
+                        location_seed, destination
+                    )
+            except TimeoutError:
+                # Text-search responses normally already contain coordinates.
+                # Keep those verified points instead of losing the complete
+                # answer while retrying a few missing locations.
+                pois = location_seed
+            # Fetch detail/Commons media once for the final candidate set.
+            # Supplemental searches intentionally skip this expensive fan-out.
+            media_seed = pois[:12]
+            try:
+                async with asyncio.timeout(
+                    max(
+                        0.1,
+                        self.settings.agent_optional_enrichment_timeout_seconds,
+                    )
+                ):
+                    pois = await self.amap_tool.enrich_poi_media(
+                        media_seed, poi_query, destination
+                    )
+            except TimeoutError:
+                # Inline photos from text search remain available. Optional
+                # detail/Commons lookups must never turn a valid map/answer
+                # into a complete Agent timeout.
+                pois = media_seed
             # Keep the media shape stable even when different MCP servers use
             # ``photo``, ``photos`` or nested image objects.  The UI consumes
             # this normalized list and can therefore render the same cards for
@@ -502,11 +555,17 @@ class TravelPlanningAgent(SpecialistAgent):
         except (RuntimeError, ValueError) as exc:
             poi_error = str(exc)
             pois = []
-        self.check_tool("weather_query")
-        try:
-            weather = await self.amap_tool.weather(destination)
-        except (RuntimeError, ValueError):
-            weather = {}
+
+        rag_items, search_result, weather = await asyncio.gather(
+            rag_task, web_task, weather_task
+        )
+        evidence = sorted(
+            [*self.rag_tool.reliable(rag_items), *search_result.items],
+            key=lambda item: item.similarity,
+            reverse=True,
+        )[: self.settings.web_rerank_top_k]
+        knowledge_gap = self.rag_tool.has_knowledge_gap(rag_items)
+        evidence_tools = [self.rag_tool.name, *search_result.tools_used]
         await self.emit_progress(f"已找到可安排的地点：{len(pois)}个。")
         if weather.get("condition"):
             await self.emit_progress(f"天气：{weather['condition']}。")
@@ -1008,9 +1067,20 @@ class TravelPlanningAgent(SpecialistAgent):
             result["pois"] = self.media_tool.attach_answer_descriptions(
                 result.get("pois") or [], answer
             )
-            result = await self.media_tool.enrich_answer_pois(
-                answer, result, evidence=state.get("evidence", [])
-            )
+            try:
+                async with asyncio.timeout(
+                    max(
+                        0.1,
+                        self.settings.agent_optional_enrichment_timeout_seconds,
+                    )
+                ):
+                    result = await self.media_tool.enrich_answer_pois(
+                        answer, result, evidence=state.get("evidence", [])
+                    )
+            except TimeoutError:
+                # The grounded answer and the already verified POIs/map are
+                # complete. Late optional media must not discard them.
+                pass
         # A model can occasionally copy an unrelated city from weak evidence
         # even after retrieval filters. Never expose an answer that explicitly
         # names another known destination for this itinerary; fall back to the

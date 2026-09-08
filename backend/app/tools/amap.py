@@ -26,12 +26,47 @@ class AmapMcpTool:
         return await self.provider.call_tool(name, arguments)
 
     async def search_pois(
-        self, keywords: str, city: str, limit: int = 10
+        self,
+        keywords: str,
+        city: str,
+        limit: int = 10,
+        *,
+        enrich_details: bool = True,
     ) -> list[dict[str, Any]]:
         result = await self.execute(
-            "poi_search", {"keywords": keywords, "city": city, "limit": limit}
+            "poi_search",
+            {
+                "keywords": keywords,
+                "city": city,
+                "limit": limit,
+                "enrich_details": enrich_details,
+            },
         )
         return result if isinstance(result, list) else []
+
+    async def enrich_poi_media(
+        self,
+        places: list[dict[str, Any]],
+        keywords: str = "",
+        city: str = "",
+    ) -> list[dict[str, Any]]:
+        """Fetch optional POI photos once after candidates are consolidated.
+
+        Itinerary planning may issue several broad and supplemental searches.
+        Fetching detail/Commons photos during every search repeats the slowest
+        network fan-out and can consume the complete Agent time budget.  Map
+        coordinates remain independent and are enriched before this step.
+        """
+
+        items = [dict(item) for item in places if isinstance(item, dict)]
+        enricher = getattr(self.provider, "enrich_poi_media", None)
+        if not callable(enricher):
+            return items
+        try:
+            result = await enricher(items, keywords, city)
+        except (RuntimeError, ValueError, OSError):
+            return items
+        return result if isinstance(result, list) else items
 
     async def enrich_poi_locations(
         self, places: list[dict[str, Any]], city: str = ""

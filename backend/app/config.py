@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     playwright_max_concurrency: int = 2
     agent_max_tool_calls: int = 4
     agent_timeout_seconds: float = 120
+    agent_optional_enrichment_timeout_seconds: float = 12
     agent_graph_recursion_limit: int = 12
     short_memory_messages: int = 12
     max_chat_sessions_per_scene: int = 5

@@ -54,6 +54,8 @@ services:
         value: mcp
       - key: AMAP_MCP_ENDPOINT
         value: https://mcp.amap.com/mcp
+      - key: AGENT_OPTIONAL_ENRICHMENT_TIMEOUT_SECONDS
+        value: 12
       - key: DEEPSEEK_API_KEY
         sync: false
       - key: AMAP_MCP_API_KEY
@@ -72,4 +74,3 @@ databases:
     plan: free
     databaseName: deeptravel
     user: deeptravel
-

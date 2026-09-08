@@ -83,6 +83,11 @@ class NormalisingIntentLlm(FakeIntentLlm):
         }
 
 
+class UnexpectedIntentLlm(FakeIntentLlm):
+    async def chat_json(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+        raise AssertionError("高置信度明确请求不应调用远程模型")
+
+
 @pytest.mark.asyncio
 async def test_intent_classifier_prefers_llm_and_keeps_grounded_entities() -> None:
     llm = FakeIntentLlm()
@@ -103,6 +108,17 @@ async def test_intent_classifier_normalises_grounded_city_and_landmark_suffixes(
     ).classify("宁波天一阁景区有哪些景点")
     assert decision.entities["destination"] == "宁波"
     assert decision.entities["area"] == "天一阁"
+
+
+@pytest.mark.asyncio
+async def test_intent_classifier_skips_remote_call_for_obvious_itinerary() -> None:
+    decision = await TravelIntentClassifier(
+        Settings(_env_file=None), UnexpectedIntentLlm()  # type: ignore[arg-type]
+    ).classify("帮我规划杭州三日游")
+
+    assert decision.intent == "itinerary"
+    assert decision.source == "rules"
+    assert decision.confidence >= 0.9
 
 
 class FakePoiProvider:

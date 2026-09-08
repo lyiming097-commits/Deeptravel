@@ -234,6 +234,37 @@ async def test_amap_poi_search_prioritises_famous_result_before_applying_limit(m
     assert pois[0]["name"] == "西湖风景名胜区"
 
 
+@pytest.mark.asyncio
+async def test_amap_poi_search_can_defer_slow_detail_enrichment(monkeypatch) -> None:
+    client = OrderedPoiClient()
+    provider = AmapMcpProvider("https://mcp.amap.com/mcp", "key", client=client)
+    calls = {"locations": 0, "media": 0}
+
+    async def locations(items: list[dict[str, Any]], *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        calls["locations"] += 1
+        return items
+
+    async def media(items: list[dict[str, Any]], *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        calls["media"] += 1
+        return items
+
+    monkeypatch.setattr(provider, "enrich_poi_locations", locations)
+    monkeypatch.setattr(provider, "_enrich_poi_photos", media)
+
+    pois = await provider.call_tool(
+        "poi_search",
+        {
+            "keywords": "杭州景点",
+            "city": "杭州",
+            "limit": 2,
+            "enrich_details": False,
+        },
+    )
+
+    assert len(pois) == 2
+    assert calls == {"locations": 0, "media": 0}
+
+
 def test_amap_route_polyline_extracts_ordered_geometry_from_steps() -> None:
     polyline = AmapMcpProvider._route_polyline(
         {

@@ -19,6 +19,7 @@ from backend.app.tools import (
 class FakeAmap:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.media_enrichment_calls = 0
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         self.calls.append((name, arguments))
@@ -45,6 +46,15 @@ class FakeAmap:
         if name == "distance_measure":
             return {"distance_km": 3.0, "driving_duration_minutes": 20}
         raise AssertionError(f"未预期的工具：{name}")
+
+    async def enrich_poi_media(
+        self,
+        places: list[dict[str, Any]],
+        keywords: str = "",
+        city: str = "",
+    ) -> list[dict[str, Any]]:
+        self.media_enrichment_calls += 1
+        return places
 
 
 class FakeRagTool:
@@ -155,6 +165,14 @@ async def test_travel_plan_agent_uses_plan_and_execute_graph() -> None:
     assert "budget_calculator" not in outcome.tools_used
     assert len(outcome.result["days_plan"]) == 3
     assert outcome.execution_trace[0]["phase"] == "plan"
+    poi_calls = [arguments for name, arguments in amap.provider.calls if name == "poi_search"]
+    assert poi_calls
+    # Bulk itinerary searches defer detail/media fan-out. Optional landmark
+    # resolution after answer composition uses limit=8 and has its own budget.
+    bulk_calls = [arguments for arguments in poi_calls if arguments["limit"] != 8]
+    assert bulk_calls
+    assert all(arguments["enrich_details"] is False for arguments in bulk_calls)
+    assert amap.provider.media_enrichment_calls == 1
 
 
 @pytest.mark.asyncio

@@ -157,12 +157,25 @@ class AmapMcpProvider:
             key=lambda item: self._poi_priority(item, keywords), reverse=True
         )
         normalised = normalised[:limit]
-        # Coordinates are core map data, so resolve them before optional photo
-        # fan-out. Detail/Commons image requests can be slow or rate-limited;
-        # they must not prevent otherwise valid POIs from appearing on maps.
-        normalised = await self.enrich_poi_locations(normalised, city, limit=12)
-        normalised = await self._enrich_poi_photos(normalised, keywords, city)
+        # Coordinates are core map data, while detail/Commons image requests
+        # are optional and comparatively slow.  Multi-search callers can defer
+        # both fan-outs until their candidates have been merged, avoiding the
+        # same enrichment work for every supplemental query.
+        if arguments.get("enrich_details", True) is not False:
+            normalised = await self.enrich_poi_locations(normalised, city, limit=12)
+            normalised = await self._enrich_poi_photos(normalised, keywords, city)
         return normalised
+
+    async def enrich_poi_media(
+        self,
+        places: list[dict[str, Any]],
+        keywords: str = "",
+        city: str = "",
+    ) -> list[dict[str, Any]]:
+        """Enrich one final POI set with detail and fallback photos."""
+
+        normalised = [dict(item) for item in places if isinstance(item, dict)]
+        return await self._enrich_poi_photos(normalised, keywords, city)
 
     async def enrich_poi_locations(
         self,

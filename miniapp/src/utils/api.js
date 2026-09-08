@@ -136,7 +136,18 @@ export function streamMessage(sessionId, payload, onEvent) {
       if (error) reject(error)
       else resolve(value)
     }
-    const task = uni.request({
+    let task = null
+    const consumeSafely = (frame) => {
+      try {
+        consumeSseFrame(frame, onEvent)
+        return true
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error || '对话处理失败')))
+        task?.abort?.()
+        return false
+      }
+    }
+    task = uni.request({
       url: apiUrl(`/api/v1/chat/sessions/${sessionId}/messages/stream`),
       method: 'POST',
       data: payload,
@@ -161,9 +172,11 @@ export function streamMessage(sessionId, payload, onEvent) {
         }
         const frames = buffer.split(/\n\n/)
         buffer = frames.pop() || ''
-        frames.forEach((frame) => consumeSseFrame(frame, onEvent))
+        for (const frame of frames) {
+          if (!consumeSafely(frame)) return
+        }
         if (buffer.trim()) {
-          consumeSseFrame(buffer, onEvent)
+          if (!consumeSafely(buffer)) return
           buffer = ''
         }
         finish(null, true)
@@ -178,7 +191,7 @@ export function streamMessage(sessionId, payload, onEvent) {
         while (boundary !== -1) {
           const frame = buffer.slice(0, boundary)
           buffer = buffer.slice(boundary + 2)
-          consumeSseFrame(frame, onEvent)
+          if (!consumeSafely(frame)) return
           boundary = buffer.indexOf('\n\n')
         }
       })

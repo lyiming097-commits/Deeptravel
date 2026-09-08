@@ -1,10 +1,9 @@
-"""Model-first travel intent and lightweight entity extraction.
+"""Travel intent classification and lightweight entity extraction.
 
 The agents need a small canonical vocabulary to select tools, but the decision
-itself should not be made by a growing list of string checks.  This module lets
-the configured LLM classify the user's latest request and keeps a deterministic
-scorer as a safe fallback for mock mode, provider failures, and short obvious
-messages.
+itself should not be made by a growing list of string checks.  High-confidence
+obvious requests use the deterministic scorer immediately; ambiguous requests
+use the configured LLM with the same scorer as a safe fallback.
 """
 
 import json
@@ -309,6 +308,12 @@ class TravelIntentClassifier:
             "entities": fallback.entities,
         }
         if self.settings.llm_mocked or not self.llm.configured:
+            return fallback
+        # Explicit requests such as "帮我规划杭州三日游" already carry a strong
+        # intent signal. A remote model round-trip cannot improve tool routing
+        # enough to justify spending up to half of the Agent's total budget.
+        # Ambiguous and multi-intent questions remain model-classified.
+        if fallback.intent == "itinerary" and fallback.confidence >= 0.9:
             return fallback
         try:
             parsed = await self.llm.chat_json(
